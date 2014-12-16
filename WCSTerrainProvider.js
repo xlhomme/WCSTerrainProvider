@@ -60,9 +60,9 @@
                 urlDescribeCoverage = description.proxy.getURL(urlDescribeCoverage);
             }
 
-            resultat = Cesium.when(Cesium.loadXML(urlDescribeCoverage),
-                function (xml) {
-                    return OGCHelper.WCSParser.getDescribeCoverage(xml, description);
+            resultat = Cesium.when(Cesium.loadWithXhr({url: urlDescribeCoverage, responseType: ''}),
+                function (data) {
+                    return OGCHelper.WCSParser.getDescribeCoverage(data, description);
                 });
 
 
@@ -109,11 +109,9 @@
         resultat.heightMapHeight = Cesium.defaultValue(description.heightMapHeight, resultat.heightMapWidth);
 
         // Check CoverageId == LayerName
-		var CoverageId = coverage.querySelector("wcs\\:CoverageId, CoverageId").textContent;
-       
-	   var lowerCorner = convertToFloat(coverage.querySelector('wcs\\:lowerCorner, lowerCorner').textContent.split(' '));
-       
-	    var upperCorner = convertToFloat(coverage.querySelector('wcs\\:upperCorner, upperCorner').textContent.split(' '));
+        var CoverageId = $('wcs\\:Coverageid, Coverageid', $(coverage)).text();
+        var lowerCorner =convertToFloat( $('gml\\:lowerCorner, lowerCorner', $(coverage)).text().split(' '));
+        var upperCorner = convertToFloat($('gml\\:upperCorner, upperCorner', $(coverage)).text().split(' '));
 
         // Missing Get Axis Label to know if Lat Long or Long Lat 
         var invertAxis = true;
@@ -123,19 +121,15 @@
             lowerCorner = invertTab(lowerCorner);
         }
 
-       var low = convertToFloat(coverage.querySelector('gml\\:low, low').textContent.split(' '));
-		var high = convertToFloat(coverage.querySelector('gml\\:high, high').textContent.split(' '));
+        var low = convertToFloat( $('gml\\:low, low', $(coverage)).text().split(' '));
+        var high = convertToFloat( $('gml\\:high, high', $(coverage)).text().split(' '));
 
-      
-		// Get the native CRS of the coverage return somethine like that : http://www.opengis.net/def/crs/EPSG/0/4326   
-        var envelope = coverage.querySelector('gml\\:Envelope, Envelope');
-		var aSrsName = envelope.getAttribute('srsName');
-		var aSrsNameCode = aSrsName.split('/');
-		var epsgCode= parseInt(aSrsNameCode);
-		if (isNaN(epsgCode))
-			epsgCode = 4326;
-			
-		var projstring = 'EPSG:' + epsgCode;
+
+        // Missing GetCRS ( CRS is CRS of Enveloppe or CRS of IMage 
+        var enveloppe = $('gml\\:Enveloppe, Enveloppe', $(coverage));
+
+        var pCRS = 4326;
+        var projstring = 'EPSG:' + pCRS.toString();
         var getCRS = OGCHelper.CRS.filter(function (elt) {
             return elt.name === projstring;
         });
@@ -158,9 +152,9 @@
 
 
         var bbox = {
-            'WKID': epsgCode,
+            'WKID': 4326,
             'EPSG': projstring,
-            'coord': [[lowerCorner[0], upperCorner[1]], [lowerCorner[0], lowerCorner[1]], [upperCorner[0], lowerCorner[1]], [upperCorner[0], upperCorner[1]]],
+             'coord': [[lowerCorner[0], upperCorner[1]], [lowerCorner[0], lowerCorner[1]], [upperCorner[0], lowerCorner[1]], [upperCorner[0], upperCorner[1]]],
             'ulidx': 0,
             'llidx': 1,
             'lridx': 2,
@@ -168,13 +162,13 @@
         };
         resultat.bbox = bbox;
 
-		// ToDo : use maxLevel instead of 18 
         resultat.getTileDataAvailable = function (x, y, level) {
-            if (level <= resultat.maxLevel)
+            if (level < 18)
                 return true;
             return false;
 
         };
+
         
         // Define the URL for GetCoverage
         var urlofServer = description.url;
@@ -259,7 +253,6 @@
             credit = new Cesium.Credit(credit);
         }
 
-		this.lastTile = undefined;
         this.ready = false;
 		this.DefaultProvider = new Cesium.EllipsoidTerrainProvider();
 		console.log("Default WH : ", this.DefaultProvider.heightMapWidth, this.DefaultProvider.heightMapHeight);
@@ -325,7 +318,7 @@
 
         // Here we need to check if the tilingScheme.CRS is the same of the Image 
         // If no we need to convert 
-        // But It will to slow the processus then we should assume tilingScheme has been set 
+        // But It will to slow the process then we should assume tilingScheme has been set 
         // with the CRS of the image 
 
 		
@@ -377,15 +370,6 @@
                     resultat.getHeightmapTerrainDataFromWCS = function (x, y, level) {
                         var retour;
                         if (!isNaN(x + y + level)) {
-							if (WCSTerrainProvider.lastTile!=undefined &&
-								WCSTerrainProvider.lastTile.x == x &&
-								WCSTerrainProvider.lastTile.y == y &&
-								WCSTerrainProvider.lastTile.level == level)
-								{
-									//console.log("get  Last Tile ",x, y, level);
-									return WCSTerrainProvider.lastTile.value;
-								}
-								
                             //console.log("getHeightmapTerrainDataFromWCS",x, y, level);
                             var urlGetCoverage = templateToURL(resultat.urlGetCoverage, x, y, level, provider);
                             var hasChildren = 0;
@@ -402,13 +386,11 @@
                             var promise = Cesium.loadWithXhr({ url: urlGetCoverage, responseType: 'arraybuffer' });
                             if (Cesium.defined(promise)) {
                                 retour = Cesium.when(promise, function (image) {
-                                    var  myHeightmapTerrainData = WCSTerrainProvider.GeotiffToHeightmapTerrainData(image,
+                                    return WCSTerrainProvider.GeotiffToHeightmapTerrainData(image,
                                         {
                                             width: resultat.heightMapWidth,
                                             height: resultat.heightMapHeight
                                         }, x, y,level, hasChildren,provider.tilingScheme);
-										WCSTerrainProvider.lastTile = {'x': x, 'y': y, 'level': level, 'value': myHeightmapTerrainData};
-									return myHeightmapTerrainData;
                                 }).otherwise(function () {
                                    return provider.DefaultProvider.requestTileGeometry(x, y, level);
 								 
@@ -439,6 +421,7 @@
                     }
                     else {
                         retour = provider.DefaultProvider.requestTileGeometry(x, y, level);
+                        //console.log("requestTileGeometry", level);
                     }
                     return retour;
                 }
@@ -495,18 +478,18 @@
 
 
 				// Test pour savoir dans quelle tuile se trouve mon WCS
-                var bbox = resultat.bbox;
+                /*var bbox = resultat.bbox;
                 var pgeo = new Cesium.Cartographic(
                     Cesium.Math.toRadians(bbox.coord[bbox.ulidx][0]),
                     Cesium.Math.toRadians(bbox.coord[bbox.ulidx][1]), 
-                     0);
+                     0);*/
                 resultat.minLevel = 30;
                 resultat.maxLevel = 0;
 
                 for (var j = 0 ; j < 30 ; j++)
                 {
-                    // var tile = provider.tilingScheme.positionToTileXY(pgeo,j);
-				    //var rect = provider.tilingScheme.tileXYToNativeRectangle(tile.x, tile.y, j);
+                   // var tile = provider.tilingScheme.positionToTileXY(pgeo,j);
+					//var rect = provider.tilingScheme.tileXYToNativeRectangle(tile.x, tile.y, j);
 					var rect = provider.tilingScheme.tileXYToNativeRectangle(0, 0, j);
                     var xSpacing = (rect.east - rect.west) / (provider.heightMapWidth - 1);
                     var ySpacing = (rect.north - rect.south) / (provider.heightMapHeight - 1);
@@ -522,11 +505,8 @@
                         	
                     }
                 }
-		
-		// tested with those values
-		
-		/*resultat.minLevel = 12;
-		resultat.maxLevel = 13;*/
+				// resultat.minLevel = 12;
+				// resultat.maxLevel = 14;
                 console.log("Show DTM Between evel ", resultat.minLevel, resultat.maxLevel);
             }
         });
@@ -548,7 +528,7 @@
         return urlParam.replace("{south}", rect.south).replace("{north}", rect.north).replace("{west}", rect.west).replace("{east}", rect.east).replace("{scaleX}", scalingX).replace("{scaleY}", scalingY);
       }
 
-  
+   
 
     Cesium.WCSTerrainProvider = WCSTerrainProvider;
 })();
