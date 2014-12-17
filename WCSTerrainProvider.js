@@ -103,33 +103,32 @@
         }
 
         var layerName = description.layerName;
-        var maxLevel = Cesium.defaultValue(description.maxLevel, 11);
-
+      
         resultat.heightMapWidth = Cesium.defaultValue(description.heightMapWidth, 65);
         resultat.heightMapHeight = Cesium.defaultValue(description.heightMapHeight, resultat.heightMapWidth);
 
         // Check CoverageId == LayerName
 		var CoverageId = coverage.querySelector("wcs\\:CoverageId, CoverageId").textContent;
        
-	   var lowerCorner = convertToFloat(coverage.querySelector('wcs\\:lowerCorner, lowerCorner').textContent.split(' '));
-       
+		var lowerCorner = convertToFloat(coverage.querySelector('wcs\\:lowerCorner, lowerCorner').textContent.split(' '));
 	    var upperCorner = convertToFloat(coverage.querySelector('wcs\\:upperCorner, upperCorner').textContent.split(' '));
 
-        // Missing Get Axis Label to know if Lat Long or Long Lat 
-        var invertAxis = true;
-        if (invertAxis)
+		
+		 var envelope = coverage.querySelector('gml\\:Envelope, Envelope');
+		 var axisLabels = envelope.getAttribute('axisLabels');
+		 
+		if (axisLabels=='Lat Long')
         {
             upperCorner = invertTab(upperCorner);
             lowerCorner = invertTab(lowerCorner);
         }
 
-       var low = convertToFloat(coverage.querySelector('gml\\:low, low').textContent.split(' '));
+		var low = convertToFloat(coverage.querySelector('gml\\:low, low').textContent.split(' '));
 		var high = convertToFloat(coverage.querySelector('gml\\:high, high').textContent.split(' '));
 
       
-		// Get the native CRS of the coverage return somethine like that : http://www.opengis.net/def/crs/EPSG/0/4326   
-        var envelope = coverage.querySelector('gml\\:Envelope, Envelope');
-		var aSrsName = envelope.getAttribute('srsName');
+			// Get the native CRS of the coverage return somethine like that : http://www.opengis.net/def/crs/EPSG/0/4326   
+       var aSrsName = envelope.getAttribute('srsName');
 		var aSrsNameCode = aSrsName.split('/');
 		var epsgCode= parseInt(aSrsNameCode);
 		if (isNaN(epsgCode))
@@ -168,7 +167,7 @@
         };
         resultat.bbox = bbox;
 
-		// ToDo : use maxLevel instead of 18 
+		
         resultat.getTileDataAvailable = function (x, y, level) {
             if (level <= resultat.maxLevel)
                 return true;
@@ -186,7 +185,10 @@
 
 
         var mntBbox = "&SUBSET=Long,EPSG:4326({west},{east})&SUBSET=Lat,EPSG:4326({south},{north})";
-        var scaling = "&ScaleAxesByFactor=Lat({scaleX}),Long({scaleY})";
+       // var scaling = "&ScaleAxesByFactor=Lat({scaleX}),Long({scaleY})";
+		var scaling = "&SCALESIZE=http://www.opengis.net/def/axis/OGC/1/i(" + resultat.heightMapWidth + "),http://www.opengis.net/def/axis/OGC/1/j("+ resultat.heightMapHeight +")";
+		
+		
         var urlGetCoverage = urlofServer
             + '?SERVICE=WCS&VERSION=2.0.1&FORMAT=image/geotiff&REQUEST=GetCoverage&CoverageId=' + description.layerName + mntBbox + scaling;
 
@@ -203,8 +205,8 @@
             var bbox = resultat.bbox;
             var rect = provider.tilingScheme.tileXYToNativeRectangle(x, y, level);
 
-            if (bbox.coord[bbox.ulidx][0] >= rect.east || bbox.coord[bbox.lridx][0] <= rect.west ||
-              bbox.coord[bbox.lridx][1] >= rect.north || bbox.coord[bbox.ulidx][1] <= rect.south) {
+            if (bbox.coord[bbox.ulidx][0] >= rect.east  || bbox.coord[bbox.lridx][0] <= rect.west ||
+                bbox.coord[bbox.lridx][1] >= rect.north || bbox.coord[bbox.ulidx][1] <= rect.south) {
                 inside = false;
             }
             return inside;
@@ -220,7 +222,7 @@
      * A {@link TerrainProvider} that produces geometry by tessellating height
      * maps retrieved from a geoserver terrain server.
      *
-     * @alias GeoserverTerrainProvider
+     * @alias WCSTerrainProvider
      * @constructor
      *
      * @param {String}
@@ -237,8 +239,6 @@
      *            displayed on the canvas.
      * @param {Number}
      *            [description.heightMapWidth] width and height of the tiles
-     * @param {Number}
-     *            [description.maxLevel] max level of tiles
      * @param {String}
      *            [description.service] type of service to use (WMS, TMS or WMTS)
      * @param {String}
@@ -262,8 +262,7 @@
 		this.lastTile = undefined;
         this.ready = false;
 		this.DefaultProvider = new Cesium.EllipsoidTerrainProvider();
-		console.log("Default WH : ", this.DefaultProvider.heightMapWidth, this.DefaultProvider.heightMapHeight);
-
+		
 
         Cesium.defineProperties(this, {
             errorEvent: {
@@ -309,14 +308,10 @@
         var width = parser.imageWidth;
         var height = parser.imageLength;
        
-        //console.log("Level " , level , "w" ,size.width, "h" , size.height);
-
+       
         var index=0;
         var heightBuffer = new Float32Array(size.height * size.width);
-        var rect = tilingSc.tileXYToNativeRectangle(x, y, level);
-        var xSpacing = (rect.east - rect.west) / size.width;
-        var ySpacing = (rect.north - rect.south) / size.height;
-
+      
         // Convert pixelValue to heightBuffer 
 		//--------------------------------------
         // We need to return a Heighmap of size 65x65
@@ -328,30 +323,41 @@
         // But It will to slow the processus then we should assume tilingScheme has been set 
         // with the CRS of the image 
 
-		
-		var minH =6000;
-		var maxH=0;
-        for (var j=0;j<size.height;j++)
-            for (var i=0;i<size.width;i++) {
-				// Transform i,j of the Heighmap into res[1], res[2] of the downloaded image
-				// if downloaded image is the same zize of heightBuffer this convertion wouldn't be done
-                var lon = rect.west  + xSpacing * i;
-                var lat = rect.north - ySpacing * j;
-                var res = parser.PCSToImage(lon, lat);
-                if (res[0] == 1) {
-                    var pixelValue = parser.getPixelValueOnDemand(res[1], res[2]);
-                    heightBuffer[index] = pixelValue[0];
-					if (heightBuffer[index]<minH)
-						minH=heightBuffer[index];
-					if (heightBuffer[index]>maxH)
-						maxH=heightBuffer[index];
-                }
-                else
-                {
-                    heightBuffer[index] = 0.0;
-                }				
-				index++;               
-            }
+		if (size.height != height || size.width != width)
+		{
+			var rect = tilingSc.tileXYToNativeRectangle(x, y, level);
+			var xSpacing = (rect.east - rect.west) / size.width;
+			var ySpacing = (rect.north - rect.south) / size.height;
+
+			for (var j=0;j<size.height;j++)
+				for (var i=0;i<size.width;i++) {
+					// Transform i,j of the Heighmap into res[1], res[2] of the downloaded image
+					// if downloaded image is the same zize of heightBuffer this convertion wouldn't be done
+				   
+					var lon = rect.west  + xSpacing * i;
+					var lat = rect.north - ySpacing * j;
+					var res = parser.PCSToImage(lon, lat);
+					if (res[0] == 1) {
+						var pixelValue = parser.getPixelValueOnDemand(res[1], res[2]);
+						 heightBuffer[index] = pixelValue[0];
+					
+					}
+					else
+					{
+						heightBuffer[index] = 0.0;
+					}				
+					index++;               
+				}
+		}
+		else
+		{
+			 for (var j=0;j<size.height;j++)
+				for (var i=0;i<size.width;i++) {
+					var pixelValue = parser.getPixelValueOnDemand(i, j);
+					heightBuffer[index] = pixelValue[0];
+					index++;               
+				}
+		}
 			
 
        if (!Cesium.defined(heightBuffer)) {
@@ -364,8 +370,7 @@
             childTileMask: childrenMask
         };
        
-	     //console.log("New  Cesium.HeightmapTerrainData Level " , level  ,x, y, "minH" ,minH, "maxH" , maxH);
-        return new Cesium.HeightmapTerrainData(optionsHeihtmapTerrainData);
+	   return new Cesium.HeightmapTerrainData(optionsHeihtmapTerrainData);
     };
 	
    
@@ -505,15 +510,12 @@
 
                 for (var j = 0 ; j < 30 ; j++)
                 {
-                    // var tile = provider.tilingScheme.positionToTileXY(pgeo,j);
-				    //var rect = provider.tilingScheme.tileXYToNativeRectangle(tile.x, tile.y, j);
-					var rect = provider.tilingScheme.tileXYToNativeRectangle(0, 0, j);
+                    var rect = provider.tilingScheme.tileXYToNativeRectangle(0, 0, j);
                     var xSpacing = (rect.east - rect.west) / (provider.heightMapWidth - 1);
                     var ySpacing = (rect.north - rect.south) / (provider.heightMapHeight - 1);
                     var scalingX = provider.pixelSize[0] / xSpacing
                     var scalingY = provider.pixelSize[1] / ySpacing;
-                   // console.log("Show Tile of my UL DTM Level " + j, tile.x, tile.y, scalingX, scalingY);
-					console.log(" DTM Level " + j, 0, 0, scalingX, scalingY);
+                    console.log(" DTM Level " + j, 0, 0, scalingX, scalingY);
                   
                     if (scalingX < 10 && scalingX > 1 / 10 && Math.abs(scalingY) < 10 && Math.abs(scalingY) > 1 / 10)
                      {
@@ -522,9 +524,9 @@
                         	
                     }
                 }
-		//resultat.minLevel = 12;
-		//resultat.maxLevel = 13;
-                console.log("Show DTM Between evel ", resultat.minLevel, resultat.maxLevel);
+				 //resultat.minLevel = 12;
+				 //resultat.maxLevel = 13;
+                 //console.log("Show DTM Between level ", resultat.minLevel, resultat.maxLevel);
             }
         });
     }
@@ -533,16 +535,16 @@
         var rect = provider.tilingScheme.tileXYToNativeRectangle(x, y, level);
         var xSpacing = (rect.east - rect.west) / (provider.heightMapWidth - 1);
         var ySpacing = (rect.north - rect.south) / (provider.heightMapHeight - 1);
-        var scalingX = provider.pixelSize[0] / xSpacing
-        var scalingY = provider.pixelSize[1] / ySpacing;
-     
+       
         rect.west -= xSpacing * 0.5;
         rect.east += xSpacing * 0.5;
         rect.south -= ySpacing * 0.5;
         rect.north += ySpacing * 0.5;
-        
+       /* var scalingX = provider.pixelSize[0] / xSpacing
+        var scalingY = provider.pixelSize[1] / ySpacing;
+		.replace("{scaleX}", scalingX).replace("{scaleY}", scalingY)*/
  
-        return urlParam.replace("{south}", rect.south).replace("{north}", rect.north).replace("{west}", rect.west).replace("{east}", rect.east).replace("{scaleX}", scalingX).replace("{scaleY}", scalingY);
+        return urlParam.replace("{south}", rect.south).replace("{north}", rect.north).replace("{west}", rect.west).replace("{east}", rect.east);
       }
 
   
