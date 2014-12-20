@@ -103,6 +103,8 @@
         }
 
         var layerName = description.layerName;
+        resultat.minLevel = Cesium.defaultValue(description.minLevel, undefined);
+        resultat.maxLevel = Cesium.defaultValue(description.maxLevel, undefined);
       
         resultat.heightMapWidth = Cesium.defaultValue(description.heightMapWidth, 65);
         resultat.heightMapHeight = Cesium.defaultValue(description.heightMapHeight, resultat.heightMapWidth);
@@ -127,8 +129,8 @@
 		var high = convertToFloat(coverage.querySelector('gml\\:high, high').textContent.split(' '));
 
       
-			// Get the native CRS of the coverage return somethine like that : http://www.opengis.net/def/crs/EPSG/0/4326   
-       var aSrsName = envelope.getAttribute('srsName');
+		// Get the native CRS of the coverage return somethine like that : http://www.opengis.net/def/crs/EPSG/0/4326   
+        var aSrsName = envelope.getAttribute('srsName');
 		var aSrsNameCode = aSrsName.split('/');
 		var epsgCode= parseInt(aSrsNameCode);
 		if (isNaN(epsgCode))
@@ -169,10 +171,9 @@
 
 		
         resultat.getTileDataAvailable = function (x, y, level) {
-            if (level <= resultat.maxLevel)
+            if (level <= resultat.maxLevel  && resultat.isInTile(x, y, level))
                 return true;
             return false;
-
         };
         
         // Define the URL for GetCoverage
@@ -199,8 +200,8 @@
         resultat.urlGetCoverage = urlGetCoverage;
 
 
-        // Is the X,Y,Level define a tile that contans or overlaps our bbox
-        resultat.isInTile = function (x, y, level, provider) {
+        // Is the X,Y,Level define a tile that is contains in our bbox
+        resultat.isTileInside = function (x, y, level, provider) {
             var inside = true;
             var bbox = resultat.bbox;
             var rect = provider.tilingScheme.tileXYToNativeRectangle(x, y, level);
@@ -208,6 +209,28 @@
             if (bbox.coord[bbox.ulidx][0] >= rect.east  || bbox.coord[bbox.lridx][0] <= rect.west ||
                 bbox.coord[bbox.lridx][1] >= rect.north || bbox.coord[bbox.ulidx][1] <= rect.south) {
                 inside = false;
+            }
+            return inside;
+        };
+		  // Is the X,Y,Level define a tile that contains or ovelaps our bbox
+		 resultat.isInTile = function (x, y, level) {
+            var inside = false;
+            var bbox = resultat.bbox;
+            var rect = resultat.tilingScheme.tileXYToNativeRectangle(x, y, level);
+			// One point of the bbox is in the tile
+            if ((bbox.coord[bbox.ulidx][0] >= rect.west && bbox.coord[bbox.ulidx][0] <= rect.east  &&
+				bbox.coord[bbox.ulidx][1] >= rect.south && bbox.coord[bbox.ulidx][1] <= rect.north)	||	
+                (bbox.coord[bbox.uridx][0] >= rect.west && bbox.coord[bbox.uridx][0] <= rect.east  &&
+				bbox.coord[bbox.uridx][1] >= rect.south && bbox.coord[bbox.uridx][1] <= rect.north)	||	
+                (bbox.coord[bbox.llidx][0] >= rect.west && bbox.coord[bbox.llidx][0] <= rect.east  &&
+				bbox.coord[bbox.llidx][1] >= rect.south && bbox.coord[bbox.llidx][1] <= rect.north)	||	
+                (bbox.coord[bbox.lridx][0] >= rect.west && bbox.coord[bbox.lridx][0] <= rect.east  &&
+				bbox.coord[bbox.lridx][1] >= rect.south && bbox.coord[bbox.lridx][1] <= rect.north) ||
+			// or the tile is in the bbox
+				(bbox.coord[bbox.ulidx][0] < rect.east  && bbox.coord[bbox.lridx][0] > rect.west &&
+                bbox.coord[bbox.lridx][1] < rect.north && bbox.coord[bbox.ulidx][1] > rect.south)
+				) {
+                inside = true;
             }
             return inside;
 
@@ -308,7 +331,8 @@
         var width = parser.imageWidth;
         var height = parser.imageLength;
        
-       
+        //console.log("Level " , level , "w" ,size.width, "h" , size.height);
+
         var index=0;
         var heightBuffer = new Float32Array(size.height * size.width);
       
@@ -370,7 +394,8 @@
             childTileMask: childrenMask
         };
        
-	   return new Cesium.HeightmapTerrainData(optionsHeihtmapTerrainData);
+	     //console.log("New  Cesium.HeightmapTerrainData Level " , level  ,x, y, "minH" ,minH, "maxH" , maxH);
+        return new Cesium.HeightmapTerrainData(optionsHeihtmapTerrainData);
     };
 	
    
@@ -395,13 +420,11 @@
                             var urlGetCoverage = templateToURL(resultat.urlGetCoverage, x, y, level, provider);
                             var hasChildren = 0;
                             if (level < resultat.maxLevel) {
-                                var childLevel = level + 1;
-
-                                hasChildren |= resultat.isInTile(2 * x, 2 * y, childLevel, provider) ? 1 : 0;
-                                hasChildren |= resultat.isInTile(2 * x + 1, 2 * y, childLevel, provider) ? 2 : 0;
-                                hasChildren |= resultat.isInTile(2 * x, 2 * y + 1, childLevel, provider) ? 4 : 0;
-                                hasChildren |= resultat.isInTile(2 * x + 1, 2 * y + 1, childLevel, provider) ? 8 : 0;
-
+							// no need to test for all child --> we are in the case of isTileInside
+                                hasChildren |=1;
+                                hasChildren |=2;
+                                hasChildren |=4;
+                                hasChildren |=8;
                             }
 
                             var promise = Cesium.loadWithXhr({ url: urlGetCoverage, responseType: 'arraybuffer' });
@@ -432,17 +455,18 @@
 
                 provider.requestTileGeometry = function (x, y, level) {
                     var retour;
-                  
+					
                     if (Cesium.defined(resultat.getHeightmapTerrainDataFromWCS) &&
                         level >= resultat.minLevel &&
                         level <= resultat.maxLevel &&
-                        resultat.isInTile(x, y, level, provider) == true) {
+                        resultat.isTileInside(x, y, level, provider) == true) {
                       
-
+						//console.log("Terrain Get Tile " ,x, y, level);
                         retour = resultat.getHeightmapTerrainDataFromWCS(x, y, level);
 
                     }
                     else {
+						//console.log("Ellipsoid Get Tile " ,x, y, level);
                         retour = provider.DefaultProvider.requestTileGeometry(x, y, level);
                     }
                     return retour;
@@ -498,35 +522,38 @@
 
                 });
 
+				if (resultat.minLevel == undefined || resultat.maxLevel == undefined)
+				{
+					// Test pour savoir dans quelle tuile se trouve mon WCS
+					var bbox = resultat.bbox;
+					var pgeo = new Cesium.Cartographic(
+						Cesium.Math.toRadians(bbox.coord[bbox.ulidx][0]),
+						Cesium.Math.toRadians(bbox.coord[bbox.ulidx][1]), 
+						 0);
+					resultat.minLevel = 30;
+					resultat.maxLevel = 0;
 
-				// Test pour savoir dans quelle tuile se trouve mon WCS
-                var bbox = resultat.bbox;
-                var pgeo = new Cesium.Cartographic(
-                    Cesium.Math.toRadians(bbox.coord[bbox.ulidx][0]),
-                    Cesium.Math.toRadians(bbox.coord[bbox.ulidx][1]), 
-                     0);
-                resultat.minLevel = 30;
-                resultat.maxLevel = 0;
-
-                for (var j = 0 ; j < 30 ; j++)
-                {
-                    var rect = provider.tilingScheme.tileXYToNativeRectangle(0, 0, j);
-                    var xSpacing = (rect.east - rect.west) / (provider.heightMapWidth - 1);
-                    var ySpacing = (rect.north - rect.south) / (provider.heightMapHeight - 1);
-                    var scalingX = provider.pixelSize[0] / xSpacing
-                    var scalingY = provider.pixelSize[1] / ySpacing;
-                    console.log(" DTM Level " + j, 0, 0, scalingX, scalingY);
-                  
-                    if (scalingX < 10 && scalingX > 1 / 10 && Math.abs(scalingY) < 10 && Math.abs(scalingY) > 1 / 10)
-                     {
-                        if (j < resultat.minLevel) resultat.minLevel = j;
-                        if (j > resultat.maxLevel) resultat.maxLevel = j;
-                        	
-                    }
-                }
-				 //resultat.minLevel = 12;
-				 //resultat.maxLevel = 13;
-                 //console.log("Show DTM Between level ", resultat.minLevel, resultat.maxLevel);
+					for (var j = 0 ; j < 30 ; j++)
+					{
+						// var tile = provider.tilingScheme.positionToTileXY(pgeo,j);
+						//var rect = provider.tilingScheme.tileXYToNativeRectangle(tile.x, tile.y, j);
+						var rect = provider.tilingScheme.tileXYToNativeRectangle(0, 0, j);
+						var xSpacing = (rect.east - rect.west) / (provider.heightMapWidth - 1);
+						var ySpacing = (rect.north - rect.south) / (provider.heightMapHeight - 1);
+						var scalingX = provider.pixelSize[0] / xSpacing
+						var scalingY = provider.pixelSize[1] / ySpacing;
+					   // console.log("Show Tile of my UL DTM Level " + j, tile.x, tile.y, scalingX, scalingY);
+						console.log(" DTM Level " + j, 0, 0, scalingX, scalingY);
+					  
+						if (scalingX < 10 && scalingX > 1 / 10 && Math.abs(scalingY) < 10 && Math.abs(scalingY) > 1 / 10)
+						 {
+							if (j < resultat.minLevel) resultat.minLevel = j;
+							if (j > resultat.maxLevel) resultat.maxLevel = j;
+								
+						}
+					}
+					console.log("Show DTM Between evel ", resultat.minLevel, resultat.maxLevel);
+				}
             }
         });
     }
@@ -547,7 +574,18 @@
         return urlParam.replace("{south}", rect.south).replace("{north}", rect.north).replace("{west}", rect.west).replace("{east}", rect.east);
       }
 
+  /*
   
+  if (level < resultat.maxLevel) {
+                                var childLevel = level + 1;
+
+                                hasChildren |= resultat.isTileInside(2 * x, 2 * y, childLevel, provider) ? 1 : 0;
+                                hasChildren |= resultat.isTileInside(2 * x + 1, 2 * y, childLevel, provider) ? 2 : 0;
+                                hasChildren |= resultat.isTileInside(2 * x, 2 * y + 1, childLevel, provider) ? 4 : 0;
+                                hasChildren |= resultat.isTileInside(2 * x + 1, 2 * y + 1, childLevel, provider) ? 8 : 0;
+
+                            }
+							*/
 
     Cesium.WCSTerrainProvider = WCSTerrainProvider;
 })();
