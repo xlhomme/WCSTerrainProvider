@@ -23,7 +23,7 @@ I use Geoserver for doing that.
 For my example I have installed a Geoserver under a Tomcat on my computer. 
 I can access the WCS by this URL : http://localhost:8080/geoserver/wcs
 
-For Cesium, I nneded to initialize the terrainProvider as follow : 
+For Cesium, I needed to initialize the terrainProvider as follow : 
 
 ```javascript
 var WCSTerrainProvider = new Cesium.WCSTerrainProvider({
